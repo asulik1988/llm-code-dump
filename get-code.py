@@ -17,7 +17,21 @@ def load_gitignore_patterns(directory):
     patterns.append('.git/')
 
     spec = PathSpec.from_lines(GitWildMatchPattern, patterns)
-    return spec
+
+    # Also extract simple patterns that can be used with the tree command
+    tree_exclude_patterns = []
+    for pattern in patterns:
+        # Skip comments and empty lines
+        if not pattern or pattern.startswith('#'):
+            continue
+        # Extract simple names without wildcards or complex patterns
+        if '/' not in pattern and '*' not in pattern and '!' not in pattern:
+            tree_exclude_patterns.append(pattern)
+        # Add directories with trailing slashes
+        elif pattern.endswith('/'):
+            tree_exclude_patterns.append(pattern[:-1])  # Remove trailing slash
+
+    return spec, tree_exclude_patterns
 
 def is_ignored(spec, base_dir, rel_path):
     if spec is None:
@@ -36,7 +50,7 @@ def main():
         print(f"Error: {directory} is not a directory or does not exist.")
         sys.exit(1)
 
-    spec = load_gitignore_patterns(directory)
+    spec, tree_ignore_patterns = load_gitignore_patterns(directory)
     output_file = 'combined_output.txt'
 
     with open(output_file, 'w', encoding='utf-8', errors='replace') as out:
@@ -67,16 +81,40 @@ def main():
 
                 out.write("\n################################################################################\n")
 
-        # Append the tree output, ignoring venv, output, and .git
-        try:
-            tree_proc = subprocess.run(
-                ["tree", directory, "--prune", "-I", "venv|output|.git"],
-                capture_output=True, 
-                text=True
-            )
-            out.write(tree_proc.stdout)
-        except FileNotFoundError:
-            out.write("[tree command not found]\n")
+        # Append the tree output using gitignore patterns
+        if tree_ignore_patterns:
+            ignore_pattern = '|'.join(tree_ignore_patterns)
+            try:
+                tree_proc = subprocess.run(
+                    ["tree", directory, "--prune", "-I", ignore_pattern],
+                    capture_output=True,
+                    text=True
+                )
+                out.write(tree_proc.stdout)
+            except FileNotFoundError:
+                out.write("[tree command not found]\n")
+            except subprocess.SubprocessError as e:
+                out.write(f"[Error running tree command: {e}]\n")
+                # Fallback to simpler pattern if command line is too long
+                try:
+                    tree_proc = subprocess.run(
+                        ["tree", directory, "--prune", "-I", "node_modules|.git|venv"],
+                        capture_output=True,
+                        text=True
+                    )
+                    out.write(tree_proc.stdout)
+                except:
+                    out.write("[Could not run tree command with fallback patterns]\n")
+        else:
+            try:
+                tree_proc = subprocess.run(
+                    ["tree", directory, "--prune", "-I", "node_modules|.git|venv"],
+                    capture_output=True,
+                    text=True
+                )
+                out.write(tree_proc.stdout)
+            except FileNotFoundError:
+                out.write("[tree command not found]\n")
 
 if __name__ == "__main__":
     main()
